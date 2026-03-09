@@ -12,6 +12,11 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function resetDir(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+}
+
 function sanitizeFileName(value) {
   return String(value || 'untitled')
     .replace(/[<>:"/\\|?*]+/g, '_')
@@ -99,7 +104,7 @@ function buildMarkdown(sections) {
   const parts = [
     '# ' + sections.title,
     '',
-    '- 报名时间: ' + (sections.registrationTime || '未提取到'),
+    '- 活动时间: ' + (sections.activityTime || '未提取到'),
     '',
     '## 活动介绍',
     sections.introduction || '未提取到',
@@ -121,8 +126,8 @@ function buildMarkdown(sections) {
 function extractStructuredSections(content, title, url) {
   const normalized = normalizeText(content);
 
-  const registrationTimeMatch = normalized.match(/报名时间[:：]?\s*([^\n]+)/);
-  const registrationTime = registrationTimeMatch ? registrationTimeMatch[1].trim() : '';
+  const activityTimeMatch = normalized.match(/活动时间[:：]?\s*([^\n]+)/);
+  const activityTime = activityTimeMatch ? activityTimeMatch[1].trim() : '';
 
   const introduction = formatListLikeContent(
     extractSection(normalized, '活动介绍', ['参与须知', '奖项设置', '学分设置', '活动标签', '活动详情'], 'last')
@@ -142,7 +147,7 @@ function extractStructuredSections(content, title, url) {
   return {
     title,
     url,
-    registrationTime,
+    activityTime,
     introduction,
     notes,
     credits,
@@ -318,8 +323,8 @@ async function extractCurrentPage(page, baseName) {
 
 async function main() {
   ensureDir(OUTPUT_DIR);
-  ensureDir(MARKDOWN_DIR);
-  ensureDir(ATTACHMENTS_DIR);
+  resetDir(MARKDOWN_DIR);
+  resetDir(ATTACHMENTS_DIR);
 
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext(getContextOptions());

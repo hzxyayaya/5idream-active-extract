@@ -1,0 +1,15 @@
+{
+  "name": "playwright-5idream-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright helpers for accessing 5idream.net with persisted auth state.",
+  "scripts": {
+    "login": "node scripts/login-and-save.js",
+    "open": "node scripts/open-with-state.js",
+    "detect": "node scripts/detect-login-options.js",
+    "extract-activities": "node scripts/extract-active-activities.js"
+  },
+  "dependencies": {
+    "playwright": "^1.53.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "5idream-scraper",
+      "path": "apps/5idream-scraper"
+    },
+    {
+      "name": "5idream-mcp",
+      "path": "apps/5idream-mcp"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.history": true
+    },
+    "search.exclude": {
+      "**/.history": true
+    }
+  }
+}

@@ -1,15 +1,15 @@
 {
-  "name": "playwright-5idream-helper",
-  "version": "1.0.0",
+  "name": "5idream-workspace",
   "private": true,
-  "description": "Playwright helpers for accessing 5idream.net with persisted auth state.",
+  "workspaces": [
+    "apps/5idream-scraper",
+    "apps/5idream-mcp"
+  ],
   "scripts": {
-    "login": "node scripts/login-and-save.js",
-    "open": "node scripts/open-with-state.js",
-    "detect": "node scripts/detect-login-options.js",
-    "extract-activities": "node scripts/extract-active-activities.js"
-  },
-  "dependencies": {
-    "playwright": "^1.53.0"
+    "scraper:login": "npm run login --workspace apps/5idream-scraper",
+    "scraper:open": "npm run open --workspace apps/5idream-scraper",
+    "scraper:detect": "npm run detect --workspace apps/5idream-scraper",
+    "scraper:extract": "npm run extract-activities --workspace apps/5idream-scraper",
+    "mcp:start": "npm run start --workspace apps/5idream-mcp"
   }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "mcp-5idream",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "stdio MCP wrapper for the local 5idream Playwright project.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^1.18.0",
+    "zod": "^3.24.1"
+  }
+}

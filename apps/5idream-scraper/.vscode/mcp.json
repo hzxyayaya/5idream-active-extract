@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "5idream": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/../5idream-mcp/server.js"
+      ],
+      "cwd": "${workspaceFolder}/../5idream-mcp"
+    }
+  }
+}

@@ -37,6 +37,8 @@ async function main() {
   }
 
   console.log('当前页面: ' + page.url());
+
+  await browser.close();
 }
 
 main().catch((error) => {

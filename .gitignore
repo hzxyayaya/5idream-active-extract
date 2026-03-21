@@ -5,3 +5,4 @@ npm-debug.log*
 apps/*/node_modules/
 apps/5idream-scraper/playwright/.auth/
 apps/5idream-scraper/outputs/
+output/

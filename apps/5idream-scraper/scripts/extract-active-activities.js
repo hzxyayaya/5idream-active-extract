@@ -7,14 +7,95 @@ const STORAGE_STATE = path.join(__dirname, '..', 'playwright', '.auth', '5idream
 const OUTPUT_DIR = path.join(__dirname, '..', 'outputs', 'activities');
 const MARKDOWN_DIR = path.join(OUTPUT_DIR, 'md');
 const ATTACHMENTS_DIR = path.join(OUTPUT_DIR, 'attachments');
+const INDEX_PATH = path.join(ATTACHMENTS_DIR, 'index.json');
+const CURRENT_LIST_PATH = path.join(ATTACHMENTS_DIR, 'current-list.json');
+const MANUAL_LOGIN_WAIT_MS = Number.parseInt(process.env.FIVEIDREAM_MANUAL_LOGIN_WAIT_MS || '20000', 10);
+const LOGIN_POLL_INTERVAL_MS = 1500;
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function resetDir(dir) {
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
+function safeReadJson(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function fileExists(filePath) {
+  return !!filePath && fs.existsSync(filePath);
+}
+
+function shortHash(value) {
+  let hash = 0;
+  const input = String(value || '');
+
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return Math.abs(hash).toString(36).slice(0, 8);
+}
+
+function buildItemSignature(item) {
+  return [
+    item.title || '',
+    item.activityTimeLine || '',
+    item.activityLocationLine || '',
+  ].join(' | ');
+}
+
+function buildFileBase(item) {
+  return sanitizeFileName((item.title || 'untitled') + '-' + shortHash(buildItemSignature(item)));
+}
+
+function loadExistingIndex() {
+  const entries = safeReadJson(INDEX_PATH, []);
+  const map = new Map();
+
+  for (const entry of entries) {
+    if (!entry || !entry.signature) {
+      continue;
+    }
+
+    const hasAllFiles =
+      fileExists(entry.markdownPath) &&
+      fileExists(entry.textPath) &&
+      fileExists(entry.metaPath) &&
+      fileExists(entry.imagePath);
+
+    if (hasAllFiles) {
+      map.set(entry.signature, entry);
+    }
+  }
+
+  return map;
+}
+
+function cleanupOutputs(indexEntries) {
+  const keepMarkdown = new Set(indexEntries.map((entry) => path.basename(entry.markdownPath)).filter(Boolean));
+  const keepAttachments = new Set(
+    ['index.json', 'current-list.json', ...indexEntries.flatMap((entry) => [
+      path.basename(entry.textPath),
+      path.basename(entry.metaPath),
+      path.basename(entry.imagePath),
+    ])].filter(Boolean)
+  );
+
+  for (const file of fs.readdirSync(MARKDOWN_DIR)) {
+    if (!keepMarkdown.has(file)) {
+      fs.rmSync(path.join(MARKDOWN_DIR, file), { force: true });
+    }
+  }
+
+  for (const file of fs.readdirSync(ATTACHMENTS_DIR)) {
+    if (!keepAttachments.has(file)) {
+      fs.rmSync(path.join(ATTACHMENTS_DIR, file), { force: true });
+    }
+  }
 }
 
 function sanitizeFileName(value) {
@@ -163,6 +244,108 @@ function getContextOptions() {
   return { storageState: STORAGE_STATE };
 }
 
+async function pageShowsLogin(page) {
+  const selectors = [
+    '.messageMask:visible',
+    '.loginmessageMask:visible',
+    '#login-qrecode',
+    '#log-login-qrecode',
+  ];
+
+  for (const selector of selectors) {
+    const visible = await page.locator(selector).first().isVisible().catch(() => false);
+    if (visible) {
+      return true;
+    }
+  }
+
+  const bodyText = await page.locator('body').innerText().catch(() => '');
+  const showsLoginText = /扫一扫登录|扫码登录|到梦空间APP扫一扫登录|请重新登录/i.test(bodyText);
+  const showsLoginEntry = await page
+    .locator('a.logBtn.loginBtn, .indexloginBtn')
+    .first()
+    .isVisible()
+    .catch(() => false);
+
+  return showsLoginText || showsLoginEntry;
+}
+
+async function waitForManualLogin(page) {
+  const deadline = Date.now() + Math.max(MANUAL_LOGIN_WAIT_MS, 0);
+
+  while (Date.now() < deadline) {
+    const stillShowsQrLogin = await pageShowsLogin(page);
+    const showsLoggedInUi = await page
+      .locator('.loginquit, .userinfo, #navschoolname')
+      .first()
+      .isVisible()
+      .catch(() => false);
+
+    if (!stillShowsQrLogin || showsLoggedInUi) {
+      return true;
+    }
+
+    await page.waitForTimeout(LOGIN_POLL_INTERVAL_MS);
+  }
+
+  const stillShowsQrLogin = await pageShowsLogin(page);
+  const showsLoggedInUi = await page
+    .locator('.loginquit, .userinfo, #navschoolname')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  return !stillShowsQrLogin || showsLoggedInUi;
+}
+
+async function clickLoginButton(page) {
+  const strategies = [
+    async () => {
+      await page.getByText('登录', { exact: true }).click({ timeout: 5000 });
+    },
+    async () => {
+      await page.locator('a.logBtn.loginBtn').click({ timeout: 5000 });
+    },
+    async () => {
+      await page.locator('.indexloginBtn').click({ timeout: 5000 });
+    },
+    async () => {
+      await page.evaluate(() => {
+        const selectors = ['a.logBtn.loginBtn', '.indexloginBtn', 'a.logBtn'];
+        for (const selector of selectors) {
+          const node = document.querySelector(selector);
+          if (node) {
+            node.click();
+            return true;
+          }
+        }
+
+        const nodes = Array.from(document.querySelectorAll('a, button, div, span'));
+        const loginNode = nodes.find((node) => node.textContent && node.textContent.trim() === '登录');
+        if (loginNode) {
+          loginNode.click();
+          return true;
+        }
+
+        return false;
+      });
+    },
+  ];
+
+  for (const strategy of strategies) {
+    try {
+      await strategy();
+      await page.waitForTimeout(1200);
+      if (await pageShowsLogin(page)) {
+        return true;
+      }
+    } catch {
+      // Try next strategy.
+    }
+  }
+
+  return await pageShowsLogin(page);
+}
+
 async function ensureLoggedIn(page) {
   await page.goto(BASE_URL, {
     waitUntil: 'domcontentloaded',
@@ -171,9 +354,24 @@ async function ensureLoggedIn(page) {
 
   await page.waitForLoadState('networkidle').catch(() => {});
 
-  const bodyText = await page.locator('body').innerText().catch(() => '');
-  if (/扫一扫登录|扫码登录|到梦空间APP扫一扫登录/i.test(bodyText)) {
-    throw new Error('Stored login state is no longer valid. Run npm run login again.');
+  if (await pageShowsLogin(page)) {
+    await page.waitForTimeout(3000);
+    await clickLoginButton(page);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    console.log('检测到登录页，等待最多 ' + MANUAL_LOGIN_WAIT_MS + 'ms 供手动完成登录。');
+    const loggedIn = await waitForManualLogin(page);
+
+    if (!loggedIn) {
+      throw new Error(
+        'Stored login state is no longer valid, and manual login did not complete within ' +
+        MANUAL_LOGIN_WAIT_MS +
+        'ms. Run npm run login again or increase FIVEIDREAM_MANUAL_LOGIN_WAIT_MS.'
+      );
+    }
+
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.context().storageState({ path: STORAGE_STATE });
+    console.log('登录态已刷新保存: ' + STORAGE_STATE);
   }
 }
 
@@ -185,24 +383,6 @@ async function openMyActivities(page) {
 
   if (await hasActivityCards()) {
     return;
-  }
-
-  const tabCandidates = [
-    page.getByRole('link', { name: '我报名的', exact: true }),
-    page.locator('a').filter({ hasText: '我报名的' }),
-    page.locator('li').filter({ hasText: '我报名的' }),
-    page.locator('span').filter({ hasText: '我报名的' }),
-  ];
-
-  for (const locator of tabCandidates) {
-    const candidate = locator.first();
-    if (await candidate.isVisible().catch(() => false)) {
-      await candidate.click().catch(() => {});
-      await page.waitForTimeout(1500);
-      if (await hasActivityCards()) {
-        return;
-      }
-    }
   }
 
   const navCandidates = [
@@ -226,31 +406,38 @@ async function openMyActivities(page) {
     throw new Error('Could not find a visible navigation link for 我的活动.');
   }
 
-  let tabClicked = false;
-  for (const locator of tabCandidates) {
-    const candidate = locator.first();
-    if (await candidate.isVisible().catch(() => false)) {
-      await candidate.click().catch(() => {});
-      tabClicked = true;
-      break;
-    }
-  }
-
   await page.waitForTimeout(1500);
 
   if (await hasActivityCards()) {
     return;
   }
 
-  if (!tabClicked) {
-    throw new Error('Entered 我的活动, but could not find 我报名的 and no activity cards were visible.');
+  const tabCandidates = [
+    page.getByRole('link', { name: '我报名的', exact: true }),
+    page.locator('a').filter({ hasText: '我报名的' }),
+    page.locator('li').filter({ hasText: '我报名的' }),
+    page.locator('span').filter({ hasText: '我报名的' }),
+  ];
+
+  for (const locator of tabCandidates) {
+    const candidate = locator.first();
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click().catch(() => {});
+      await page.waitForTimeout(1500);
+      if (await hasActivityCards()) {
+        return;
+      }
+    }
   }
+
+  throw new Error('Entered 我的活动, but no activity cards were visible on the default list or 我报名的.');
 }
 
 async function collectCards(page) {
   const cards = page.locator('div').filter({ has: page.locator('text=活动地点') });
   const count = await cards.count();
   const items = [];
+  const seen = new Set();
 
   for (let i = 0; i < count; i += 1) {
     const card = cards.nth(i);
@@ -259,15 +446,90 @@ async function collectCards(page) {
       continue;
     }
 
+     const locationMatches = text.match(/活动地点/g) || [];
+     const timeMatches = text.match(/活动时间/g) || [];
+     if (locationMatches.length !== 1 || timeMatches.length !== 1) {
+       continue;
+     }
+
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const title = lines.find((line) => !/^(我报名的|全部|已结束|报名中|进行中|未知)$/.test(line)) || 'untitled';
+    if (title === '我报名的') {
+      continue;
+    }
+
+    const activityTimeLine = lines.find((line) => /活动时间/.test(line)) || '';
+    const activityLocationLine = lines.find((line) => /活动地点/.test(line)) || '';
+    const signature = [title, activityTimeLine, activityLocationLine].join(' | ');
+    if (seen.has(signature)) {
+      continue;
+    }
+    seen.add(signature);
+
     items.push({
       index: i,
       text,
       status: /已结束/.test(text) ? '已结束' : (/报名中/.test(text) ? '报名中' : (/进行中/.test(text) ? '进行中' : '未知')),
-      title: (text.split(/\r?\n/)[0] || 'untitled').trim(),
+      title,
+      signature,
+      activityTimeLine,
+      activityLocationLine,
     });
   }
 
   return { cards, items };
+}
+
+async function goToNextPage(page) {
+  const firstCardTextBefore = await page
+    .locator('div')
+    .filter({ has: page.locator('text=活动地点') })
+    .first()
+    .innerText()
+    .catch(() => '');
+
+  const nextCandidates = [
+    page.getByRole('link', { name: '下一页', exact: true }),
+    page.getByRole('button', { name: '下一页', exact: true }),
+    page.locator('a').filter({ hasText: '下一页' }),
+    page.locator('button').filter({ hasText: '下一页' }),
+    page.locator('li').filter({ hasText: '下一页' }),
+    page.locator('[class*="next"]').filter({ hasText: '下一页' }),
+  ];
+
+  for (const locator of nextCandidates) {
+    const candidate = locator.first();
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const className = await candidate.getAttribute('class').catch(() => '');
+    const text = (await candidate.innerText().catch(() => '')).trim();
+    const ariaDisabled = await candidate.getAttribute('aria-disabled').catch(() => '');
+    if (/disabled|forbid/.test(String(className || '')) || ariaDisabled === 'true' || !text) {
+      return false;
+    }
+
+    const previousUrl = page.url();
+    await candidate.click().catch(() => {});
+    await page.waitForTimeout(1800);
+
+    const firstCardTextAfter = await page
+      .locator('div')
+      .filter({ has: page.locator('text=活动地点') })
+      .first()
+      .innerText()
+      .catch(() => '');
+    const changed = previousUrl !== page.url() || firstCardTextAfter !== firstCardTextBefore;
+    if (changed) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function openDetailFromCard(card) {
@@ -321,52 +583,134 @@ async function extractCurrentPage(page, baseName) {
   return { title, url: page.url(), textPath, markdownPath, imagePath, metaPath };
 }
 
-async function main() {
-  ensureDir(OUTPUT_DIR);
-  resetDir(MARKDOWN_DIR);
-  resetDir(ATTACHMENTS_DIR);
+async function collectCurrentActivities(page) {
+  const summaries = [];
+  let pageNumber = 1;
 
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext(getContextOptions());
-  const page = await context.newPage();
+  while (true) {
+    const { items } = await collectCards(page);
+    const pendingItems = items.filter((item) => item.status !== '已结束');
 
-  await ensureLoggedIn(page);
+    for (const item of pendingItems) {
+      summaries.push({
+        title: item.title,
+        status: item.status,
+        signature: item.signature,
+        activityTimeLine: item.activityTimeLine,
+        activityLocationLine: item.activityLocationLine,
+        pageNumber,
+      });
+    }
+
+    if (!pendingItems.length && items.length) {
+      break;
+    }
+
+    const moved = await goToNextPage(page);
+    if (!moved) {
+      break;
+    }
+
+    pageNumber += 1;
+    await page.waitForTimeout(1500);
+  }
+
+  return summaries;
+}
+
+async function goToActivitiesPage(page, targetPageNumber) {
   await openMyActivities(page);
 
-  const { cards, items } = await collectCards(page);
-  const activeItems = items.filter((item) => item.status === '报名中' || item.status === '进行中');
-
-  if (!activeItems.length) {
-    throw new Error('No 报名中 or 进行中 activities were found on the current page.');
+  for (let currentPageNumber = 1; currentPageNumber < targetPageNumber; currentPageNumber += 1) {
+    const moved = await goToNextPage(page);
+    if (!moved) {
+      throw new Error('Could not navigate to activity page ' + targetPageNumber + '.');
+    }
   }
+}
+
+async function syncActivityOutputs(page, currentActivities, existingIndex) {
   const results = [];
 
-  for (let i = 0; i < activeItems.length; i += 1) {
-    const item = activeItems[i];
-    const card = cards.nth(item.index);
+  for (const item of currentActivities) {
+    const existingEntry = existingIndex.get(item.signature);
+    if (existingEntry) {
+      console.log('Keeping existing: ' + existingEntry.title + ' [' + item.status + ']');
+      results.push({
+        ...existingEntry,
+        status: item.status,
+        pageNumber: item.pageNumber,
+        signature: item.signature,
+      });
+      continue;
+    }
+
+    await goToActivitiesPage(page, item.pageNumber);
+
+    const { cards, items } = await collectCards(page);
+    const targetItem = items.find((candidate) => candidate.signature === item.signature);
+    if (!targetItem) {
+      console.warn('Skipping missing card from current page scan: ' + item.title);
+      continue;
+    }
+
+    const card = cards.nth(targetItem.index);
     await card.scrollIntoViewIfNeeded().catch(() => {});
 
-    const fileBase = String(i + 1).padStart(2, '0') + '-' + item.title;
-    console.log('Extracting: ' + fileBase);
+    const fileBase = buildFileBase(item);
+    console.log('Extracting: ' + fileBase + ' [' + item.status + ']');
 
     const popup = await openDetailFromCard(card);
     const targetPage = popup || page;
     const result = await extractCurrentPage(targetPage, fileBase);
-    results.push(result);
+    results.push({
+      ...result,
+      status: item.status,
+      pageNumber: item.pageNumber,
+      signature: item.signature,
+    });
 
     if (popup) {
       await popup.close().catch(() => {});
       await page.bringToFront();
     } else {
       await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
-      await openMyActivities(page);
     }
 
     await page.waitForTimeout(1200);
   }
 
-  const indexPath = path.join(ATTACHMENTS_DIR, 'index.json');
-  fs.writeFileSync(indexPath, JSON.stringify(results, null, 2) + '\n');
+  return results;
+}
+
+async function main() {
+  ensureDir(OUTPUT_DIR);
+  ensureDir(MARKDOWN_DIR);
+  ensureDir(ATTACHMENTS_DIR);
+
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext(getContextOptions());
+  const page = await context.newPage();
+  const existingIndex = loadExistingIndex();
+
+  await ensureLoggedIn(page);
+  await openMyActivities(page);
+
+  const currentActivities = await collectCurrentActivities(page);
+  fs.writeFileSync(CURRENT_LIST_PATH, JSON.stringify(currentActivities, null, 2) + '\n');
+
+  if (!currentActivities.length) {
+    throw new Error('No non-ended activities were found under 我的活动.');
+  }
+
+  const results = await syncActivityOutputs(page, currentActivities, existingIndex);
+
+  if (!results.length) {
+    throw new Error('No non-ended activities were found under 我的活动.');
+  }
+
+  cleanupOutputs(results);
+  fs.writeFileSync(INDEX_PATH, JSON.stringify(results, null, 2) + '\n');
 
   console.log('Done. Extracted count: ' + results.length);
   console.log('Output directory: ' + OUTPUT_DIR);

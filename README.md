@@ -37,7 +37,7 @@ npm run scraper:login
 
 `apps/5idream-scraper/playwright/.auth/5idream.json`
 
-### 3. 抓取当前未结束活动
+### 3. 更新当前未结束活动
 
 ```powershell
 npm run scraper:extract
@@ -46,11 +46,13 @@ npm run scraper:extract
 当前抓取逻辑会：
 
 - 自动进入“我的活动”
-- 只保留当前未结束活动
-- 先扫描当前活动列表摘要
+- 只扫描并保留当前未结束活动
+- 登录态失效时自动尝试恢复并等待扫码
+- 先生成当前活动列表摘要
 - 删除本地已经过期的旧活动文件
 - 只补抓本地缺失的活动详情
 - 更新活动索引和当前列表快照
+- 生成结构化 Markdown、JSON、截图和原始文本
 
 ### 4. 如需给 agent 使用，启动 MCP
 
@@ -78,7 +80,7 @@ npm run mcp:start
 2. `npx playwright install chromium`
 3. `npm run scraper:login`
 4. `npm run scraper:extract`
-5. 查看输出目录中的 Markdown、JSON、截图
+5. 查看输出目录中的 Markdown、JSON、截图和列表快照
 
 ### 工作流 B：想让 agent 帮你分析活动
 
@@ -86,6 +88,22 @@ npm run mcp:start
 2. `npm run scraper:extract`
 3. `npm run mcp:start`
 4. 让 agent 通过 `5idream` MCP 读取活动 Markdown 并生成总结文档
+
+### 工作流 C：想让 agent 直接走本地脚本和项目内 skill
+
+如果你不想依赖 MCP 抓取，可以让 agent 显式使用项目内 skill：
+
+```text
+Use $5idream-local-activities at skills/5idream-local-activities to refresh local 5idream activities with the Node scraper and generate the latest Chinese integration markdown.
+```
+
+这个 skill 会指导 agent：
+
+- 直接在 `apps/5idream-scraper` 里运行 `node scripts/extract-active-activities.js`
+- 使用 `apps/5idream-scraper/outputs/activities/attachments/current-list.json` 作为当前未结束活动的权威列表
+- 读取 `apps/5idream-scraper/outputs/activities/md` 目录中的活动 Markdown
+- 继承上一版整合文档顶部 Checklist 的勾选和备注子项
+- 生成新的中文整合 Markdown，并按“未完成在前、已完成在后”排序
 
 ## 输出目录
 
@@ -98,6 +116,8 @@ npm run mcp:start
 
 - `md/*.md`
   - 每个活动的结构化 Markdown
+  - 重点字段包括：活动时间、活动介绍、参与须知、学分设置、活动内容
+  - 会尽量把 `一、`、`（一）`、`1.`、`（1）` 这类编号渲染成多级 Markdown 列表
 - `attachments/*.json`
   - 每个活动的结构化数据
 - `attachments/*.txt`
@@ -115,6 +135,7 @@ npm run mcp:start
 - 登录失效时在抓取流程中自动恢复
 - 扫描当前未结束活动
 - 增量同步本地活动文档
+- 中文编号和多级有序列表的 Markdown 渲染优化
 - 通过 MCP 暴露抓取与读取能力
 - 基于活动 Markdown 继续生成整理文档
 
@@ -125,8 +146,6 @@ D:\Documents\codex
 ├─ apps
 │  ├─ 5idream-scraper
 │  └─ 5idream-mcp
-├─ output
-│  └─ doc
 ├─ package.json
 └─ 5idream.code-workspace
 ```
@@ -144,3 +163,4 @@ D:\Documents\codex
 - 页面结构依赖站点当前 DOM 和文案
 - 如果站点活动列表结构大改，选择器可能需要继续调整
 - `extract_activities` 通过 MCP 调用时可能受调用方超时限制影响；直接跑本地脚本更稳定
+- 极少数详情页如果编号写法非常混乱，Markdown 列表仍可能需要手工微调

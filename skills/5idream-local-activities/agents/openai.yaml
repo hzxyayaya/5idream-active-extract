@@ -1,0 +1,7 @@
+interface:
+  display_name: "5idream Activities"
+  short_description: "使用本地 Node 抓取并整合 5idream 活动文档"
+  default_prompt: "Use $5idream-local-activities at skills/5idream-local-activities to refresh local 5idream activities with the Node scraper and generate the latest Chinese integration markdown."
+
+policy:
+  allow_implicit_invocation: true

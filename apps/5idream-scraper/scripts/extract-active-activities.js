@@ -151,22 +151,72 @@ function extractSection(text, heading, nextHeadings, occurrence = 'last') {
   return normalizeText(text.slice(contentStart, endIndex));
 }
 
+function detectOrderedMarker(line) {
+  const patterns = [
+    { regex: /^([一二三四五六七八九十百千]+)、\s*/, level: 0 },
+    { regex: /^(\d+)[.、]\s*/, level: 0 },
+    { regex: /^[（(]([一二三四五六七八九十百千]+)[）)]\s*/, level: 1 },
+    { regex: /^[（(](\d+)[）)]\s*/, level: 1 },
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern.regex);
+    if (match) {
+      return {
+        level: pattern.level,
+        marker: match[0],
+        content: line.slice(match[0].length).trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+function splitListCandidates(text) {
+  return text
+    .replace(/([。；：!?])\s*(?=(?:[一二三四五六七八九十百千]+、|\d+[.、]|[（(][一二三四五六七八九十百千]+[）)]|[（(]\d+[）)]))/g, '$1\n')
+    .replace(/\s+(?=(?:[一二三四五六七八九十百千]+、|\d+[.、]|[（(][一二三四五六七八九十百千]+[）)]|[（(]\d+[）)]))/g, '\n')
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function formatOrderedList(text) {
+  const lines = splitListCandidates(text);
+  const counters = [];
+  const output = [];
+
+  for (const line of lines) {
+    const marker = detectOrderedMarker(line);
+    if (!marker) {
+      if (output.length) {
+        output[output.length - 1] += ' ' + line;
+      } else {
+        output.push(line);
+      }
+      continue;
+    }
+
+    counters[marker.level] = (counters[marker.level] || 0) + 1;
+    counters.length = marker.level + 1;
+
+    const indent = '   '.repeat(marker.level);
+    output.push(indent + counters[marker.level] + '. ' + (marker.content || ''));
+  }
+
+  return output.join('\n');
+}
+
 function formatListLikeContent(value) {
   const text = normalizeText(value);
   if (!text) {
     return '';
   }
 
-  const numberedParts = text
-    .replace(/([。；])\s*(\d+[.、])/g, '$1\n$2')
-    .split(/\n(?=\d+[.、])/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (numberedParts.length > 1 || /^\d+[.、]/.test(numberedParts[0] || '')) {
-    return numberedParts
-      .map((part) => part.replace(/^(\d+)[.、]\s*/, '$1. '))
-      .join('\n');
+  const orderedList = formatOrderedList(text);
+  if (orderedList !== text) {
+    return orderedList;
   }
 
   const lineParts = text
@@ -529,7 +579,182 @@ async function goToNextPage(page) {
     }
   }
 
+  const clickedNumericNext = await page.evaluate(() => {
+    const nodes = Array.from(document.querySelectorAll('a, button, li, span'));
+    const pageNodes = nodes
+      .map((node) => {
+        const text = (node.textContent || '').trim();
+        if (!/^\d+$/.test(text)) {
+          return null;
+        }
+
+        const element = node;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') {
+          return null;
+        }
+
+        const rect = element.getBoundingClientRect();
+        if (!rect.width || !rect.height) {
+          return null;
+        }
+
+        const className = `${element.className || ''} ${element.parentElement?.className || ''}`.toLowerCase();
+        const ariaCurrent = (element.getAttribute('aria-current') || element.parentElement?.getAttribute('aria-current') || '').toLowerCase();
+        const isCurrent =
+          ariaCurrent === 'page' ||
+          /(active|current|cur|selected|on)/.test(className);
+
+        return {
+          text,
+          page: Number(text),
+          isCurrent,
+          className,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.page - b.page);
+
+    if (!pageNodes.length) {
+      return false;
+    }
+
+    let currentPage = pageNodes.find((node) => node.isCurrent)?.page;
+    if (!currentPage) {
+      currentPage = Math.min(...pageNodes.map((node) => node.page));
+    }
+
+    const nextPage = pageNodes.find((node) => node.page > currentPage);
+    if (!nextPage) {
+      return false;
+    }
+
+    const clickable = nodes.find((node) => (node.textContent || '').trim() === String(nextPage.page));
+    if (!clickable) {
+      return false;
+    }
+
+    clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    return true;
+  }).catch(() => false);
+
+  if (clickedNumericNext) {
+    await page.waitForTimeout(1800);
+
+    const firstCardTextAfter = await page
+      .locator('div')
+      .filter({ has: page.locator('text=活动地点') })
+      .first()
+      .innerText()
+      .catch(() => '');
+    if (firstCardTextAfter !== firstCardTextBefore) {
+      return true;
+    }
+  }
+
   return false;
+}
+
+async function getCurrentActivitiesPageNumber(page) {
+  return await page.evaluate(() => {
+    const nodes = Array.from(document.querySelectorAll('a, button, li, span'));
+    const pageNodes = nodes
+      .map((node) => {
+        const text = (node.textContent || '').trim();
+        if (!/^\d+$/.test(text)) {
+          return null;
+        }
+
+        const element = node;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') {
+          return null;
+        }
+
+        const rect = element.getBoundingClientRect();
+        if (!rect.width || !rect.height) {
+          return null;
+        }
+
+        const className = `${element.className || ''} ${element.parentElement?.className || ''}`.toLowerCase();
+        const ariaCurrent = (element.getAttribute('aria-current') || element.parentElement?.getAttribute('aria-current') || '').toLowerCase();
+        const isCurrent =
+          ariaCurrent === 'page' ||
+          /(active|current|cur|selected|on)/.test(className);
+
+        return {
+          page: Number(text),
+          isCurrent,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.page - b.page);
+
+    if (!pageNodes.length) {
+      return 1;
+    }
+
+    return pageNodes.find((node) => node.isCurrent)?.page || Math.min(...pageNodes.map((node) => node.page));
+  }).catch(() => 1);
+}
+
+async function goToPageNumber(page, targetPageNumber) {
+  const firstCardTextBefore = await page
+    .locator('div')
+    .filter({ has: page.locator('text=活动地点') })
+    .first()
+    .innerText()
+    .catch(() => '');
+
+  const currentPageNumber = await getCurrentActivitiesPageNumber(page);
+  if (currentPageNumber === targetPageNumber) {
+    return true;
+  }
+
+  const clicked = await page.evaluate((target) => {
+    const nodes = Array.from(document.querySelectorAll('a, button, li, span'));
+    const candidates = nodes.filter((node) => {
+      const text = (node.textContent || '').trim();
+      if (text !== String(target)) {
+        return false;
+      }
+
+      const style = window.getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        return false;
+      }
+
+      const rect = node.getBoundingClientRect();
+      return !!rect.width && !!rect.height;
+    });
+
+    const candidate = candidates[0];
+    if (!candidate) {
+      return false;
+    }
+
+    candidate.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    return true;
+  }, targetPageNumber).catch(() => false);
+
+  if (!clicked) {
+    return false;
+  }
+
+  await page.waitForTimeout(1800);
+
+  const firstCardTextAfter = await page
+    .locator('div')
+    .filter({ has: page.locator('text=活动地点') })
+    .first()
+    .innerText()
+    .catch(() => '');
+
+  if (firstCardTextAfter !== firstCardTextBefore) {
+    return true;
+  }
+
+  return (await getCurrentActivitiesPageNumber(page)) === targetPageNumber;
 }
 
 async function openDetailFromCard(card) {
@@ -620,12 +845,9 @@ async function collectCurrentActivities(page) {
 
 async function goToActivitiesPage(page, targetPageNumber) {
   await openMyActivities(page);
-
-  for (let currentPageNumber = 1; currentPageNumber < targetPageNumber; currentPageNumber += 1) {
-    const moved = await goToNextPage(page);
-    if (!moved) {
-      throw new Error('Could not navigate to activity page ' + targetPageNumber + '.');
-    }
+  const moved = await goToPageNumber(page, targetPageNumber);
+  if (!moved) {
+    throw new Error('Could not navigate to activity page ' + targetPageNumber + '.');
   }
 }
 

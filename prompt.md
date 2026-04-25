@@ -1,24 +1,38 @@
-你现在在本地工作区 `D:\Documents\codex` 中工作。
+你现在在本地工作区中工作。
 
 目标：
-1. 使用本地 `5idream` MCP 获取我当前“我的活动”中的未结束活动。
+1. 不使用 MCP 抓取，直接使用本地 Node 脚本获取我当前“我的活动”中的未结束活动。
 2. 基于抓取后的活动 Markdown 文档，生成一份“活动整合文档”。
 3. 最终只需要生成 Markdown 文档，不需要生成 docx。
 
 工作要求：
-- 优先使用现有的 `5idream` MCP tools。
+- 优先直接运行本地脚本：
+  - `apps/5idream-scraper/scripts/extract-active-activities.js`
+- 推荐执行目录：
+  - `apps/5idream-scraper`
+- 推荐命令：
+  - `node scripts/extract-active-activities.js`
 - 如果登录态失效，应允许我扫码登录，然后继续执行。
 - 只处理“未结束”的活动。
 - 如果活动已经不存在于当前列表中，不要纳入新的整合文档。
 - 如果活动重复，按“同一活动”合并处理，不要重复写入。
 - 输出内容必须是中文。
 - 生成的文档不要只是摘抄原文，要把活动要求整理成可执行的任务说明。
+- 生成新文档时，要继承上一版文档顶部“所有活动总 Checklist”中的：
+  - 主勾选状态
+  - 每个活动下的备注子项
+- 文档排序要求：
+  - 未完成的活动放前面
+  - 已完成的活动放后面
 
 执行步骤：
-1. 调用 `extract_activities` 或等价流程，确保当前活动数据已抓取到：
-   - `D:\Documents\codex\apps\5idream-scraper\outputs\activities\md`
-2. 读取 `md` 目录下当前所有活动 Markdown 文件。
-3. 基于这些活动内容，生成一份整合 Markdown 文档。
+1. 直接运行本地 Node 抓取脚本，确保当前活动数据已抓取到：
+   - `apps/5idream-scraper/outputs/activities/md`
+   - `apps/5idream-scraper/outputs/activities/attachments/current-list.json`
+2. 读取 `current-list.json`，把它作为当前未结束活动的权威列表。
+3. 读取 `md` 目录下当前仍然有效的活动 Markdown 文件。
+4. 读取上一版整合文档，继承顶部 Checklist 的勾选和备注。
+5. 基于当前活动内容，生成一份新的整合 Markdown 文档。
 
 文档结构必须为：
 
@@ -26,20 +40,12 @@
 
 ## 一、所有活动总 Checklist
 - [ ] 活动A
-- [ ] 活动B
-- [ ] 活动C
+  - [ ] 备注A1
+- [x] 活动B
+  - [x] 备注B1
 
-## 二、各活动 Checklist
-### 1. 活动A
-- [ ] 子任务1
-- [ ] 子任务2
-- [ ] 子任务3
 
-### 2. 活动B
-- [ ] 子任务1
-- [ ] 子任务2
-
-## 三、各活动具体信息和需要做的内容
+## 二、各活动具体信息和需要做的内容
 ### 1. 活动A
 - 活动时间
 - 学分
@@ -56,21 +62,24 @@
 - 需要做的内容
 - 执行建议
 
-## 四、建议优先级
+## 三、建议优先级
 - 第一优先级
 - 第二优先级
 - 第三优先级
 
 格式要求：
-- “所有活动总 Checklist” 只列活动名，用于总览哪些活动已完成。
-- “各活动 Checklist” 要写成具体动作，不要只复述活动标题。
+- “所有活动总 Checklist” 只列当前仍存在的活动。
+- Checklist 顶部要按“未完成在前、已完成在后”排序。
+- “各活动具体信息和需要做的内容” 也要按“未完成在前、已完成在后”排序。
+- 顶部 Checklist 下的备注子项也要一起继承。
 - “具体信息和需要做的内容” 要把原始活动说明转成真正需要执行的步骤和交付物。
 - 如果活动需要前置条件，例如签到、截图、加入学习通、交给班委、三下乡经历等，必须写明。
 - 如果活动临近截止，要在执行建议中体现紧迫性。
 - 如果某活动是低成本可完成，也可以在执行建议中说明。
+- 如果某活动在 `current-list.json` 中存在，但详情 Markdown 没有成功落盘，也要保留在顶部 Checklist 中，并在正文中标明“详情待补抓”。
 
 输出位置：
-- `D:\Documents\codex\output\doc\5idream-activity-integration-YYYY-MM-DD.md`
+- `output/doc/5idream-activity-integration-YYYY-MM-DD.md`
 
 交付要求：
 - 完成后汇报：

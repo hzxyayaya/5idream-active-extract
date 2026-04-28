@@ -910,7 +910,10 @@ async function main() {
   ensureDir(MARKDOWN_DIR);
   ensureDir(ATTACHMENTS_DIR);
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--no-proxy-server'],
+  });
   const context = await browser.newContext(getContextOptions());
   const page = await context.newPage();
   const existingIndex = loadExistingIndex();

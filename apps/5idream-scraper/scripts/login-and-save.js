@@ -117,7 +117,10 @@ async function clickLoginEntry(page) {
 async function main() {
   ensureAuthDir();
 
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--no-proxy-server'],
+  });
   const context = await browser.newContext();
   const page = await context.newPage();
 
